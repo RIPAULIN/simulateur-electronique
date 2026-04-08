@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CircuitLab v5</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+<div id="login-screen" class="screen-login">
+  <div class="login-box">
+    <div class="login-logo">
+      <svg width="40" height="40" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="var(--accent)" stroke-width="2"/><path d="M10 24L16 24M32 24L38 24" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/><rect x="16" y="18" width="16" height="12" rx="2" stroke="var(--accent)" stroke-width="2"/></svg>
+      <h1>CircuitLab</h1><span class="ver-badge">v5</span>
+    </div>
+    <p class="login-sub">Electronic circuit simulator</p>
+    <div class="form-group"><label>Username</label><input id="inp-user" type="text" placeholder="admin" autocomplete="username"/></div>
+    <div class="form-group"><label>Password</label><input id="inp-pass" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
+    <div id="invite-group" class="form-group" style="display:none"><label>Invite Code <span style="opacity:.5">(optional)</span></label><input id="inp-invite" type="text" placeholder="CIRCUIT-2024"/></div>
+    <div class="login-actions">
+      <button id="btn-login" class="btn-primary">Login</button>
+      <button id="btn-register" class="btn-ghost">Register</button>
+    </div>
+    <p id="login-error" class="login-error"></p>
+    <div class="login-hint">Demo: <strong>admin</strong> / <strong>admin123</strong></div>
+  </div>
+</div>
+
+<div id="app-screen" class="screen-app" style="display:none">
+  <header id="topbar">
+    <div class="topbar-left">
+      <svg width="22" height="22" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="var(--accent)" stroke-width="2"/><path d="M10 24L16 24M32 24L38 24" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/><rect x="16" y="18" width="16" height="12" rx="2" stroke="var(--accent)" stroke-width="2"/></svg>
+      <span class="app-title">CircuitLab</span><span class="ver-badge">v5</span>
+    </div>
+    <div class="topbar-center"><input id="circuit-name" type="text" value="New Circuit" class="circuit-name-input"/></div>
+    <div class="topbar-right">
+      <button id="btn-tutorial" class="topbar-btn" title="Tutorial [F1]">?</button>
+      <button id="btn-theme"    class="topbar-btn">☀</button>
+      <span   id="user-label"  class="user-label"></span>
+      <button id="btn-logout"   class="topbar-btn">⏻</button>
+    </div>
+  </header>
+
+  <div id="toolbar">
+    <div class="tg">
+      <button class="tool-btn active" data-tool="select">↖ Select</button>
+      <button class="tool-btn"        data-tool="wire">〰 Wire</button>
+    </div>
+    <div class="ts"></div>
+    <div class="tg">
+      <button class="tool-btn" id="tb-undo">↩</button>
+      <button class="tool-btn" id="tb-redo">↪</button>
+      <button class="tool-btn" id="tb-del">✕</button>
+      <button class="tool-btn" id="tb-rot">↻</button>
+    </div>
+    <div class="ts"></div>
+    <div class="tg" style="margin-left:auto">
+      <button class="tool-btn sim-run"  id="btn-run">▶ DC Sim</button>
+      <button class="tool-btn sim-stop" id="btn-stop">■ Stop</button>
+    </div>
+  </div>
+
+  <div id="main-layout">
+    <aside id="sidebar">
+      <div class="sb-section">
+        <div class="sb-title">Sources</div>
+        <div class="comp-list">
+          <div class="comp-item" data-type="battery"><span class="ci">🔋</span><div><div class="cn">Battery</div><div class="cd">DC V</div></div></div>
+          <div class="comp-item" data-type="vsource"><span class="ci">◎</span><div><div class="cn">V Source</div><div class="cd">AC/DC</div></div></div>
+          <div class="comp-item" data-type="isource"><span class="ci">⊙</span><div><div class="cn">I Source</div><div class="cd">mA</div></div></div>
+          <div class="comp-item" data-type="ground"><span class="ci">⏚</span><div><div class="cn">Ground</div><div class="cd">0V ref</div></div></div>
+        </div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Passive</div>
+        <div class="comp-list">
+          <div class="comp-item" data-type="resistor"><span class="ci">⬛</span><div><div class="cn">Resistor</div><div class="cd">Ω</div></div></div>
+          <div class="comp-item" data-type="capacitor"><span class="ci">┤├</span><div><div class="cn">Capacitor</div><div class="cd">μF</div></div></div>
+          <div class="comp-item" data-type="inductor"><span class="ci">∿</span><div><div class="cn">Inductor</div><div class="cd">mH</div></div></div>
+          <div class="comp-item" data-type="potentiometer"><span class="ci">⊿</span><div><div class="cn">Potentiometer</div><div class="cd">Ω var</div></div></div>
+        </div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Semiconductors</div>
+        <div class="comp-list">
+          <div class="comp-item" data-type="led"><span class="ci">💡</span><div><div class="cn">LED</div><div class="cd">1.8V</div></div></div>
+          <div class="comp-item" data-type="diode"><span class="ci">▷|</span><div><div class="cn">Diode</div><div class="cd">0.7V</div></div></div>
+          <div class="comp-item" data-type="zener"><span class="ci">▷⌇</span><div><div class="cn">Zener</div><div class="cd">Vz</div></div></div>
+          <div class="comp-item" data-type="transistor"><span class="ci">⊳</span><div><div class="cn">NPN BJT</div><div class="cd">β=100</div></div></div>
+          <div class="comp-item" data-type="pnp"><span class="ci">⊲</span><div><div class="cn">PNP BJT</div><div class="cd">β=100</div></div></div>
+          <div class="comp-item" data-type="mosfet_n"><span class="ci">⊓</span><div><div class="cn">NMOS</div><div class="cd">FET</div></div></div>
+        </div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Measurement</div>
+        <div class="comp-list">
+          <div class="comp-item" data-type="switch"><span class="ci">🔘</span><div><div class="cn">Switch</div><div class="cd">ON/OFF</div></div></div>
+          <div class="comp-item" data-type="voltmeter"><span class="ci">Ⓥ</span><div><div class="cn">Voltmeter</div><div class="cd">V</div></div></div>
+          <div class="comp-item" data-type="ammeter"><span class="ci">Ⓐ</span><div><div class="cn">Ammeter</div><div class="cd">A</div></div></div>
+          <div class="comp-item" data-type="lamp"><span class="ci">☉</span><div><div class="cn">Lamp</div><div class="cd">W</div></div></div>
+        </div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Properties</div>
+        <div id="props-panel"><p class="p-empty">Select or click list to place</p></div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Actions</div>
+        <div class="act-list">
+          <button class="act-btn" id="btn-undo">↩ Undo</button>
+          <button class="act-btn" id="btn-redo">↪ Redo</button>
+          <div class="act-div"></div>
+          <button class="act-btn" id="btn-clear">🗑 Clear all</button>
+          <button class="act-btn" id="btn-reset-view">⊙ Reset view</button>
+        </div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Shortcuts</div>
+        <div class="sc-list">
+          <div class="sc-row"><kbd>S</kbd><span>Select</span></div>
+          <div class="sc-row"><kbd>W</kbd><span>Wire</span></div>
+          <div class="sc-row"><kbd>Esc</kbd><span>→ Select</span></div>
+          <div class="sc-row"><kbd>R</kbd><span>Rotate</span></div>
+          <div class="sc-row"><kbd>N</kbd><span>Node debug</span></div>
+          <div class="sc-row"><kbd>G</kbd><span>Graph</span></div>
+          <div class="sc-row"><kbd>Ctrl+Z/Y</kbd><span>Undo/Redo</span></div>
+          <div class="sc-row"><kbd>Scroll</kbd><span>Zoom</span></div>
+          <div class="sc-row"><kbd>2×click</kbd><span>Toggle SW</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <main id="canvas-wrapper">
+      <canvas id="circuit-canvas"></canvas>
+      <div id="canvas-overlay"><div id="tooltip" class="tooltip" style="display:none"></div></div>
+    </main>
+
+    <aside id="right-panel">
+      <div class="sb-section">
+        <div class="sb-title">Monitor</div>
+        <div id="monitor-panel">
+          <div class="mon-row"><span class="mon-lbl">Status</span><span id="mon-status" class="mon-val idle">IDLE</span></div>
+          <div class="mon-row"><span class="mon-lbl">Voltage</span><span id="mon-voltage" class="mon-val">— V</span></div>
+          <div class="mon-row"><span class="mon-lbl">Current</span><span id="mon-current" class="mon-val">— mA</span></div>
+          <div class="mon-row"><span class="mon-lbl">Power</span><span id="mon-power" class="mon-val">— mW</span></div>
+          <div class="mon-row"><span class="mon-lbl">R total</span><span id="mon-resistance" class="mon-val">— Ω</span></div>
+        </div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Transient Simulation</div>
+        <div class="tr-controls">
+          <div class="prop-row"><label>Δt (ms)</label><input id="tr-dt" type="number" value="1" min="0.01" max="100" step="0.1" style="width:100%"/></div>
+          <div class="prop-row"><label>T total (ms)</label><input id="tr-T" type="number" value="100" min="1" max="10000" style="width:100%"/></div>
+          <button class="act-btn" id="btn-run-tr" style="margin-top:4px;border-color:var(--accent3);color:var(--accent3)">▶ Run Transient</button>
+          <button class="act-btn" id="btn-graph" style="margin-top:3px">📈 Graph Panel [G]</button>
+        </div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Component Readings</div>
+        <div id="comp-readings"><p class="p-empty">Run simulation</p></div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Nodes</div>
+        <div id="nodes-panel"><p class="p-empty">—</p></div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Debug <span id="debug-badge" class="debug-badge" style="display:none">0</span></div>
+        <p class="p-empty" id="debug-ok">No errors ✓</p>
+        <div id="debug-list"></div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Frequency Analysis</div>
+        <div id="analysis-panel">
+          <div class="mon-row"><span class="mon-lbl">Cutoff fc</span><span id="an-freq" class="mon-val">— Hz</span></div>
+          <div class="mon-row"><span class="mon-lbl">τ</span><span id="an-tau" class="mon-val">— ms</span></div>
+          <div class="mon-row"><span class="mon-lbl">DC gain</span><span id="an-gain" class="mon-val">— dB</span></div>
+        </div>
+        <canvas id="bode-canvas" width="190" height="90" style="margin-top:8px;border:1px solid var(--border);border-radius:4px;width:100%"></canvas>
+        <div class="bode-labels"><span>1Hz</span><span>1kHz</span><span>100kHz</span></div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-title">Share</div>
+        <div class="act-list">
+          <button class="act-btn" id="btn-copy-link">🔗 Copy Link</button>
+          <button class="act-btn" id="btn-export-json">📤 Export JSON</button>
+          <button class="act-btn" id="btn-import-json">📥 Import JSON</button>
+          <button class="act-btn" id="btn-export-png">🖼 PNG</button>
+          <button class="act-btn" id="btn-qr">📱 QR Code</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer id="statusbar">
+    <div id="status-left">
+      <span id="tool-badge" class="tool-badge">SELECT</span>
+      <span id="status-msg">Ready. Click a component to place it.</span>
+    </div>
+    <span id="status-zoom">Zoom: 100%</span>
+  </footer>
+</div>
+
+<div id="tutorial-modal" class="modal" style="display:none">
+  <div class="modal-box">
+    <div class="modal-hdr"><h2>Tutorial — CircuitLab v5</h2><button id="btn-close-tut" class="modal-close">✕</button></div>
+    <div id="tut-steps" class="tut-steps"></div>
+    <div class="tut-nav">
+      <button id="tut-prev" class="btn-ghost">← Back</button>
+      <span id="tut-counter">1 / 5</span>
+      <button id="tut-next" class="btn-primary">Next →</button>
+    </div>
+  </div>
+</div>
+
+<div id="qr-modal" class="modal" style="display:none">
+  <div class="modal-box qr-box">
+    <div class="modal-hdr"><h2>QR Code</h2><button id="btn-close-qr" class="modal-close">✕</button></div>
+    <canvas id="qr-canvas" width="220" height="220"></canvas>
+    <p id="qr-url" class="qr-url"></p>
+    <button id="btn-dl-qr" class="btn-primary">Download QR</button>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="js/auth.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/share.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
