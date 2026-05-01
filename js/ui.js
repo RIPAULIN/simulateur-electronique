@@ -313,15 +313,15 @@ const UI = (() => {
   // ── Wire renderer with junction dots ──────────────────────────────
   function _rWire(c, P, on, sel) {
     if (c.x2 === undefined || c.y2 === undefined) return;
-    const hot = on && Engine.isRunning();
+    const trActive = Engine.isTransientRunning && Engine.isTransientRunning();
+    const hot = (on && Engine.isRunning()) || trActive;
     const thick = Math.max(1, parseFloat(c.thickness) || 2);
     const wCol = c.color || null;
     const wOp = c.opacity != null ? Math.max(0.05, Math.min(1, parseFloat(c.opacity))) : 1;
     const eCol = c.electronColor || P.particle;
-    const aSp = Math.max(0.1, parseFloat(c.animationSpeed) || 1);
     const j = _getJ();
     ctx.save(); ctx.translate(-c.x, -c.y); ctx.globalAlpha = wOp;
-    if (hot) { ctx.strokeStyle = wCol || P.wireHot; ctx.lineWidth = thick + 1; ctx.shadowColor = wCol || P.wireHot; ctx.shadowBlur = 10; ctx.setLineDash([10, 6]); ctx.lineDashOffset = -(_frame * 0.55 * aSp); }
+    if (hot) { ctx.strokeStyle = wCol || P.wireHot; ctx.lineWidth = thick + 1; ctx.shadowColor = wCol || P.wireHot; ctx.shadowBlur = 10; ctx.setLineDash([10, 6]); ctx.lineDashOffset = -(_frame * 0.55); }
     else if (sel) { ctx.strokeStyle = P.selBorder; ctx.lineWidth = thick + 1; }
     else { ctx.strokeStyle = wCol || P.wireDim; ctx.lineWidth = thick; }
     ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(c.x2, c.y2); ctx.stroke();
@@ -334,50 +334,99 @@ const UI = (() => {
     [[_sv(c.x), _sv(c.y)], [_sv(c.x2), _sv(c.y2)]].forEach(([px, py]) => {
       if (j.has(`${px},${py}`)) { ctx.fillStyle = hot ? (wCol || P.wireHot) : (wCol || P.wire || '#00e5ff'); ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 6; ctx.beginPath(); ctx.arc(px, py, 5 / zoom, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0; }
     });
-    if (hot) _drawParts(c, eCol, aSp);
+    if (hot) _drawParts(c, eCol);
     ctx.globalAlpha = 1; ctx.restore();
   }
 
   // ── Physics-based particles ───────────────────────────────────────
-  // Direction: sign of current (positive = A→B, negative = B→A)
+  // Source of truth: Engine.getResultAtStep() — works for both DC and transient.
+  // Speed  ∝ |I|  (pure physics, NO user parameter)
+  // Direction = sign(currentSigned)  (+1 = A→B, -1 = B→A)
+  // Density (particle count) ∝ |I|
+  function _getActiveResult(id) {
+    // Transient has priority; falls back to DC result.
+    if (Engine.isTransientRunning && Engine.isTransientRunning()) {
+      const r = Engine.getResultAtStep(id);
+      if (r) return r;
+    }
+    return Engine.getResult(id);
+  }
+
   function _updateParts() {
-    if (!Engine.isRunning()) { _parts.clear(); return; }
+    const active = Engine.isRunning() ||
+                   (Engine.isTransientRunning && Engine.isTransientRunning());
+    if (!active) { _parts.clear(); return; }
+
+    // Advance transient animation step in real-time (~60 steps/s playback)
+    if (Engine.isTransientRunning && Engine.isTransientRunning()) {
+      const hist = Engine.getTransientHistory();
+      if (hist && hist.time && hist.time.length > 1) {
+        const totalSteps = hist.time.length;
+        // advance by ~1 step per frame; loop continuously
+        const cur = Engine.getTransientStep ? Engine.getTransientStep() : 0;
+        const nxt = (cur + 1) % totalSteps;
+        if (Engine.setTransientStep) Engine.setTransientStep(nxt);
+      }
+    }
+
     _A(components).filter(c => c && c.type === 'wire').forEach(c => {
       if (!isFinite(c.x2)) { _parts.delete(c.id); return; }
-      const res = Engine.getResult(c.id);
-      if (!res || res.status !== 'on') { _parts.delete(c.id); return; }
-      const Ima = Math.abs(res.current || 0);
+      const res = _getActiveResult(c.id);
+      if (!res) { _parts.delete(c.id); return; }
+
+      // Use currentSigned if available (transient); fall back to current for DC
+      const Isigned = (res.currentSigned !== undefined) ? res.currentSigned : (res.current || 0);
+      const Ima = Math.abs(Isigned);
       if (Ima < 0.001) { _parts.delete(c.id); return; }
-      const aSp = Math.max(0.1, parseFloat(c.animationSpeed) || 1);
-      const spd = Math.min(0.002 + Ima * 0.0004, 0.05) * aSp;
-      const n = Math.max(2, Math.min(12, Math.ceil(Ima / 5) + 1));
-      const dir = (res.current || 0) >= 0 ? 1 : -1;
-      if (!_parts.has(c.id)) { const ps = []; for (let i = 0; i < n; i++) ps.push({ t: i / n, wobble: Math.random() * Math.PI * 2 }); _parts.set(c.id, ps); }
+
+      // Pure physics: speed and count derived entirely from current magnitude
+      const spd = Math.min(0.002 + Ima * 0.0004, 0.06);  // no user factor
+      const n   = Math.max(2, Math.min(14, Math.ceil(Ima / 4) + 1));
+      const dir = Isigned >= 0 ? 1 : -1;
+
+      if (!_parts.has(c.id)) {
+        const ps = [];
+        for (let i = 0; i < n; i++) ps.push({ t: i / n, wobble: Math.random() * Math.PI * 2 });
+        _parts.set(c.id, ps);
+      }
       const ps = _parts.get(c.id);
       while (ps.length < n) ps.push({ t: Math.random(), wobble: Math.random() * Math.PI * 2 });
       if (ps.length > n) ps.splice(n);
-      ps.forEach(p => { p.t += spd * dir; if (p.t > 1) p.t -= 1; if (p.t < 0) p.t += 1; p.wobble += 0.05; });
+      ps.forEach(p => {
+        p.t += spd * dir;
+        if (p.t > 1) p.t -= 1;
+        if (p.t < 0) p.t += 1;
+        p.wobble += 0.05;
+      });
     });
   }
 
-  function _drawParts(wire, color, aSp) {
+  function _drawParts(wire, color) {
     const ps = _parts.get(wire.id); if (!ps || !ps.length) return;
-    const dx = wire.x2 - wire.x, dy = wire.y2 - wire.y, len = Math.hypot(dx, dy); if (len < 5) return;
+    const dx = wire.x2 - wire.x, dy = wire.y2 - wire.y, len = Math.hypot(dx, dy);
+    if (len < 5) return;
     const nx = -dy / len, ny = dx / len;
-    const res = Engine.getResult(wire.id);
-    const Ima = res ? Math.abs(res.current || 0) : 0;
-    const r = Math.max(1.8, Math.min(5, 1.8 + Ima * 0.06));
-    const dir = res && (res.current || 0) >= 0 ? 1 : -1;
+    const res = _getActiveResult(wire.id);
+    const Isigned = res ? ((res.currentSigned !== undefined) ? res.currentSigned : (res.current || 0)) : 0;
+    const Ima = Math.abs(Isigned);
+    const r   = Math.max(1.8, Math.min(5, 1.8 + Ima * 0.06));
+    const dir = Isigned >= 0 ? 1 : -1;
     ps.forEach(p => {
       const bx = wire.x + dx * p.t, by = wire.y + dy * p.t;
       const wobAmp = Math.min(2, Ima * 0.02);
-      const wx = bx + nx * Math.sin(p.wobble) * wobAmp, wy = by + ny * Math.sin(p.wobble) * wobAmp;
+      const wx = bx + nx * Math.sin(p.wobble) * wobAmp;
+      const wy = by + ny * Math.sin(p.wobble) * wobAmp;
       ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = r * 3;
       ctx.beginPath(); ctx.arc(wx, wy, r, 0, Math.PI * 2); ctx.fill();
-      ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.beginPath(); ctx.arc(wx, wy, r * 0.35, 0, Math.PI * 2); ctx.fill();
-      const tx = wx - dx / len * r * 3 * dir, ty = wy - dy / len * r * 3 * dir;
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.beginPath(); ctx.arc(wx, wy, r * 0.35, 0, Math.PI * 2); ctx.fill();
+      // Trail in direction opposite to motion
+      const trx = wx - dx / len * r * 3 * dir;
+      const try_ = wy - dy / len * r * 3 * dir;
       ctx.strokeStyle = color; ctx.lineWidth = r * 0.5; ctx.globalAlpha = 0.25;
-      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(wx, wy); ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.moveTo(trx, try_); ctx.lineTo(wx, wy); ctx.stroke();
+      ctx.globalAlpha = 1;
     });
     ctx.shadowBlur = 0;
   }
@@ -398,24 +447,67 @@ const UI = (() => {
     ctx.fillText(`Graph: ${_graphTarget || '—'}  [G]=close  [click component]=select`, gx + 8, gy + 18);
     if (!_graphTarget) { ctx.fillStyle = _dark ? '#4a5568' : '#99a0b8'; ctx.font = '10px Share Tech Mono,monospace'; ctx.textAlign = 'center'; ctx.fillText('Click a component to plot V(t) and I(t)', gx + W / 2, gy + H / 2); ctx.restore(); return; }
     const vData = [], iData = [];
-    time.forEach((t, i) => { const r = history[i] && history[i][_graphTarget]; vData.push(r ? r.voltage : 0); iData.push(r ? r.current : 0); });
+    time.forEach((t, i) => {
+      const r = history[i] && history[i][_graphTarget];
+      // Use signed values so AC waveforms show positive and negative halves
+      vData.push(r ? (r.voltageSigned !== undefined ? r.voltageSigned : r.voltage) : 0);
+      iData.push(r ? (r.currentSigned !== undefined ? r.currentSigned : r.current) : 0);
+    });
     const pad = { t: 30, r: 10, b: 28, l: 44 }, cw = W - pad.l - pad.r, ch = (H - pad.t - pad.b) / 2 - 4;
     const t0 = time[0] || 0, t1 = time[time.length - 1] || 1;
     function tx(t) { return gx + pad.l + cw * (t - t0) / (t1 - t0 || 1); }
-    function drawWave(data, y0, yScale, col, lbl) {
+
+    // drawWave: yMid = pixel y of the zero line (centred in its half-panel)
+    // yScale maps units → pixels; positive values go UP (y decreases)
+    function drawWave(data, yMid, halfH, col, lbl, unitLbl) {
+      const peak = Math.max(...data.map(Math.abs), 0.001);
+      const yScale = halfH / peak * 0.88;  // 88% headroom each side
+
+      // Grid lines: top, mid, bottom of each half
       ctx.strokeStyle = _dark ? 'rgba(42,48,80,0.5)' : 'rgba(180,190,210,0.5)'; ctx.lineWidth = 0.5;
-      for (let g = 0; g <= 4; g++) { const yg = y0 - ch * g / 4; ctx.beginPath(); ctx.moveTo(gx + pad.l, yg); ctx.lineTo(gx + pad.l + cw, yg); ctx.stroke(); }
-      ctx.strokeStyle = _dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(gx + pad.l, y0); ctx.lineTo(gx + pad.l + cw, y0); ctx.stroke();
+      [yMid - halfH, yMid, yMid + halfH].forEach(yg => {
+        ctx.beginPath(); ctx.moveTo(gx + pad.l, yg); ctx.lineTo(gx + pad.l + cw, yg); ctx.stroke();
+      });
+
+      // Zero line highlighted
+      ctx.strokeStyle = _dark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.18)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(gx + pad.l, yMid); ctx.lineTo(gx + pad.l + cw, yMid); ctx.stroke();
+
+      // Waveform — y = yMid - value*yScale (positive → up)
       ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.beginPath();
-      data.forEach((v, i) => { const x = tx(time[i]), y = y0 - v * yScale; i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }); ctx.stroke();
+      data.forEach((v, i) => {
+        const x = tx(time[i]), y = yMid - v * yScale;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Current playback cursor (red vertical line)
+      if (Engine.isTransientRunning && Engine.isTransientRunning()) {
+        const step = Engine.getTransientStep ? Engine.getTransientStep() : 0;
+        if (time[step] !== undefined) {
+          const cx = tx(time[step]);
+          ctx.strokeStyle = 'rgba(255,80,80,0.7)'; ctx.lineWidth = 1;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath(); ctx.moveTo(cx, yMid - halfH); ctx.lineTo(cx, yMid + halfH); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+
+      // Label + scale
       ctx.fillStyle = col; ctx.font = '9px Share Tech Mono,monospace'; ctx.textAlign = 'left';
-      ctx.fillText(lbl, gx + pad.l + 2, y0 - ch + 10);
+      ctx.fillText(lbl, gx + pad.l + 2, yMid - halfH + 10);
+      ctx.fillStyle = _dark ? '#4a5568' : '#99a0b8'; ctx.font = '8px Share Tech Mono,monospace'; ctx.textAlign = 'right';
+      ctx.fillText(`+${peak.toFixed(1)}${unitLbl}`, gx + pad.l - 2, yMid - halfH + 8);
+      ctx.fillText(`0`, gx + pad.l - 2, yMid + 4);
+      ctx.fillText(`-${peak.toFixed(1)}`, gx + pad.l - 2, yMid + halfH);
     }
-    const vMax = Math.max(...vData.map(Math.abs), 0.1), vy0 = gy + pad.t + ch;
-    drawWave(vData, vy0, vData.some(v => v !== 0) ? (ch / vMax) * 0.9 : 1, _dark ? '#00e5ff' : '#0066cc', 'V [V]');
-    const iMax = Math.max(...iData.map(Math.abs), 0.1), iy0 = gy + pad.t + ch * 2 + 10;
-    drawWave(iData, iy0, iData.some(v => v !== 0) ? (ch / iMax) * 0.9 : 1, _dark ? '#39ff14' : '#2d8a00', 'I [mA]');
+
+    const halfH = ch;  // half the height of each sub-panel
+    const vy0   = gy + pad.t + halfH;               // V zero line y
+    const iy0   = gy + pad.t + halfH * 2 + 14;      // I zero line y
+
+    drawWave(vData, vy0, halfH, _dark ? '#00e5ff' : '#0066cc', 'V [V]',  'V');
+    drawWave(iData, iy0, halfH, _dark ? '#39ff14' : '#2d8a00', 'I [mA]', 'mA');
     ctx.fillStyle = _dark ? '#4a5568' : '#99a0b8'; ctx.font = '8px Share Tech Mono,monospace'; ctx.textAlign = 'center';
     [0, 0.25, 0.5, 0.75, 1].forEach(f => ctx.fillText((t0 + (t1 - t0) * f).toFixed(1) + 'ms', tx(t0 + (t1 - t0) * f), gy + H - 6));
     ctx.restore();
@@ -561,7 +653,13 @@ const UI = (() => {
     let h = `<div class="prop-type">${nm[comp.type] || comp.type}</div>`;
     switch (comp.type) {
       case 'battery': h += fi('Voltage (V)', 'voltage', comp.voltage ?? 9, 'number', comp.id); break;
-      case 'vsource': h += fi('Voltage (V)', 'voltage', comp.voltage ?? 5, 'number', comp.id) + fs('Waveform', 'waveform', comp.waveform || 'dc', ['dc', 'ac'], comp.id, ['DC', 'AC']) + fi('Freq (Hz)', 'frequency', comp.frequency ?? 50, 'number', comp.id); break;
+      case 'vsource':
+        h += fi('Amplitude (V)',  'amplitude',  comp.amplitude  ?? comp.voltage ?? 5, 'number', comp.id);
+        h += fi('DC Offset (V)', 'voltage',    comp.voltage    ?? 0,                 'number', comp.id);
+        h += fs('Waveform',      'waveform',   comp.waveform   || 'dc', ['dc','ac'], comp.id, ['DC','AC sin']);
+        h += fi('Frequency (Hz)','frequency',  comp.frequency  ?? 50,                'number', comp.id);
+        h += fi('Phase (°)',     'phase',       comp.phase      ?? 0,                 'number', comp.id);
+        break;
       case 'isource': h += fi('Current (mA)', 'current', comp.current ?? 10, 'number', comp.id); break;
       case 'resistor': h += fi('Resistance (Ω)', 'resistance', comp.resistance ?? 1000, 'number', comp.id); break;
       case 'potentiometer': h += fi('R total (Ω)', 'resistance', comp.resistance ?? 10000, 'number', comp.id) + fi('Wiper (%)', 'wiper', comp.wiper ?? 50, 'number', comp.id); break;

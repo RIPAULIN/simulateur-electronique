@@ -34,14 +34,16 @@ const Engine = (() => {
   let _running = false;
 
   // Transient
-  let _trTime    = [];
-  let _trHistory = [];
+  let _trTime        = [];
+  let _trHistory     = [];
+  let _trRunning     = false;  // true while transient results are active
+  let _trCurrentStep = 0;      // step index currently shown for animation
 
   function _emptyAn() { return { fc:null, tau:null, gain_db:0, bode:[] }; }
 
   // ── Defaults ───────────────────────────────────────────────────
   const DEFS = {
-    battery:{voltage:9}, vsource:{voltage:5,waveform:'dc',frequency:50},
+    battery:{voltage:9}, vsource:{voltage:5,amplitude:5,waveform:'dc',frequency:50,phase:0},
     isource:{current:10}, ground:{},
     resistor:{resistance:1000}, capacitor:{capacitance:100}, inductor:{inductance:10},
     potentiometer:{resistance:10000,wiper:50},
@@ -98,10 +100,30 @@ const Engine = (() => {
     return{nodeOf,N};
   }
 
+
+  // ── Source voltage evaluation ──────────────────────────────────
+  // Returns instantaneous voltage of a source at time t_sim [seconds].
+  // t_sim === null → DC solve → returns static/peak value.
+  // vsource waveform:'ac' → V(t) = amplitude × sin(2π·f·t + φ)
+  function getSourceVoltage(comp, t_sim) {
+    const isAC = comp.type === 'vsource' &&
+                 (comp.waveform === 'ac' || comp.waveform === 'AC');
+    if (!isAC || t_sim === null) {
+      // DC: comp.voltage holds the static value (or peak amplitude for AC)
+      return parseFloat(comp.amplitude ?? comp.voltage) ||
+             (comp.type === 'vsource' ? 5 : 9);
+    }
+    // AC: V(t) = A · sin(2π·f·t + φ)
+    const A   = parseFloat(comp.amplitude ?? comp.voltage) || 5; // [V] peak amplitude
+    const f   = Math.max(1e-9, parseFloat(comp.frequency) || 50); // [Hz]
+    const phi = (parseFloat(comp.phase) || 0) * Math.PI / 180;    // [rad]
+    return A * Math.sin(2 * Math.PI * f * t_sim + phi);
+  }
+
   // ── Netlist ────────────────────────────────────────────────────
-  // dt=null → DC mode (cap=open, ind=short)
-  // dt>0    → transient mode with companion models
-  function buildNetlist(comps,nodeOfBase,N,dt,capState,indState){
+  // dt     → null = DC mode (cap=open, ind=short) | >0 = transient
+  // t_sim  → current simulation time in seconds (null for DC)
+  function buildNetlist(comps,nodeOfBase,N,dt,capState,indState,t_sim){
     const entries=[],ci=Object.create(null);
     let nxt=N;
     function alloc(){return nxt++;}
@@ -160,7 +182,8 @@ const Engine = (() => {
         case 'ammeter':   entries.push({id,type:'R',n1,n2,value:R_AMMETER});break;
         case 'battery':
         case 'vsource':{
-          const V=Math.abs(parseFloat(comp.voltage)||(comp.type==='vsource'?5:9));
+          // t_sim = current simulation time [s], null for DC.
+          const V = getSourceVoltage(comp, t_sim);
           entries.push({id,type:'V',n1,n2,value:V});break;
         }
         case 'isource':{
@@ -272,7 +295,11 @@ const Engine = (() => {
       if(!isFinite(I))I=0;
       const Im=I*1000,aI=Math.abs(Im),aV=Math.abs(vd),P=aV*Math.abs(I)*1000;
       let status=aI>0.001?'on':'off';
-      const r={voltage:_f(aV),current:_f(aI),power:_f(P),status,_raw_I:I,_raw_V:vd};
+      // voltage/current store absolute values (for DC display compatibility).
+      // currentSigned / voltageSigned store the true signed values for transient graphs.
+      const r={voltage:_f(aV),current:_f(aI),power:_f(P),status,
+               currentSigned:_f(Im,4), voltageSigned:_f(vd,4),
+               _raw_I:I,_raw_V:vd};
       switch(info.type){
         case 'switch':   r.status=info.closed?'on':'off';break;
         case 'capacitor':r.status='charged';break;
@@ -324,8 +351,8 @@ const Engine = (() => {
   }
 
   // ── Core solve one step ────────────────────────────────────────
-  function solveOnce(comps,nodeOf,N,dt,capState,indState){
-    const{entries,ci,Ntot}=buildNetlist(comps,nodeOf,N,dt,capState,indState);
+  function solveOnce(comps,nodeOf,N,dt,capState,indState,t_sim){
+    const{entries,ci,Ntot}=buildNetlist(comps,nodeOf,N,dt,capState,indState,t_sim);
     const mna=buildMNA(entries,Ntot);
     if(!mna)return null;
     const{sol,sing}=gauss(mna.G,mna.b);
@@ -343,7 +370,7 @@ const Engine = (() => {
     let nodeOf,N;
     try{const nd=buildNodes(comps);nodeOf=nd.nodeOf;N=nd.N;}catch(e){return _fail('Errore nodi.','error');}
     _errors=faults(comps,N);
-    const step=solveOnce(comps,nodeOf,N,null,null,null);
+    const step=solveOnce(comps,nodeOf,N,null,null,null,null);
     if(!step){_nodes=nodeMap(comps,nodeOf,null);return{ok:true,results:{},errors:_errors,nodes:_nodes,analysis:_analysis,summary:{status:'idle',voltage:0,current:0,power:0,resistance:0}};}
     if(step.sing.length)_errors.push({type:'singular',message:`Matrice singolare: ${step.sing.length} nodo/i disconnesso/i.`});
     _results=step.res;
@@ -363,7 +390,7 @@ const Engine = (() => {
   // TRANSIENT SIMULATE
   // ═══════════════════════════════════════════════════════════════
   function simulateTransient(dt_ms, T_ms, onStep){
-    _trTime=[];_trHistory=[];
+    _trTime=[];_trHistory=[];_trRunning=false;_trCurrentStep=0;
     const dt=Math.max(1e-9,dt_ms/1000);
     const T=Math.max(dt,T_ms/1000);
     const steps=Math.min(Math.ceil(T/dt),2000);
@@ -380,8 +407,8 @@ const Engine = (() => {
 
     const errs=[];
     for(let step=0;step<=steps;step++){
-      const t=step*dt;
-      const r=solveOnce(comps,nodeOf,N,dt,capState,indState);
+      const t=step*dt;                                              // current time [s]
+      const r=solveOnce(comps,nodeOf,N,dt,capState,indState,t);   // Bug fix: t now propagated
       if(!r)break;
       if(r.sing.length&&step===0)errs.push({type:'singular',message:'Matrice singolare al passo 0.'});
 
@@ -402,15 +429,25 @@ const Engine = (() => {
       if(onStep)try{onStep(step,_f(t*1000,4),clean);}catch(_){}
     }
 
+    _trRunning = (_trHistory.length > 0);
     return{ok:true,time:_trTime,history:_trHistory,errors:errs,stepCount:_trTime.length};
   }
 
   function getTransientResult(id,idx){if(!_trHistory||idx<0||idx>=_trHistory.length)return null;return _trHistory[idx][id]||null;}
   function getTransientHistory(){return{time:_trTime,history:_trHistory};}
-
+  function isTransientRunning(){return _trRunning;}
+  function setTransientStep(s){_trCurrentStep=Math.max(0,Math.min(s,_trHistory.length-1));}
+  function getTransientStep(){return _trCurrentStep;}
+  // Return result at current animation step (used by particle system)
+  function getResultAtStep(id,step){
+    const s=(step!==undefined)?step:_trCurrentStep;
+    if(!_trHistory||!_trHistory.length)return _results[id]||null;
+    const entry=_trHistory[Math.max(0,Math.min(s,_trHistory.length-1))];
+    return entry?(entry[id]||null):null;
+  }
   // ── Public API ─────────────────────────────────────────────────
   function setComponents(c){_comps=Array.isArray(c)?c.filter(Boolean):[];}
-  function stop(){_running=false;_results={};_errors=[];_nodes=[];_analysis=_emptyAn();}
+  function stop(){_running=false;_results={};_errors=[];_nodes=[];_analysis=_emptyAn();_trRunning=false;_trCurrentStep=0;}
   function getResult(id){return _results[id]||null;}
   function getAllResults(){return _results;}
   function getErrors(){return _errors;}
@@ -420,5 +457,5 @@ const Engine = (() => {
 
   function _fail(error,status){return{ok:false,error,results:_results,errors:_errors,nodes:_nodes,analysis:_analysis,summary:{status,voltage:0,current:0,power:0,resistance:0}};}
 
-  return{setComponents,simulate,stop,getResult,getAllResults,getErrors,getNodes,getAnalysis,isRunning,getDefaults,simulateTransient,getTransientResult,getTransientHistory};
+  return{setComponents,simulate,stop,getResult,getAllResults,getErrors,getNodes,getAnalysis,isRunning,getDefaults,simulateTransient,getTransientResult,getTransientHistory,isTransientRunning,setTransientStep,getTransientStep,getResultAtStep};
 })();

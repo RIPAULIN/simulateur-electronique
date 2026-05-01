@@ -18,7 +18,7 @@ const Auth = (() => {
 
   // ── Utenti predefiniti (admin di sistema) ──
   const DEFAULT_USERS = [
-    { username: 'recruteur', password: 'moreone', role: 'admin', createdAt: Date.now() }
+    { username: 'admin', password: 'recruteur', role: 'moreone', createdAt: Date.now() }
   ];
 
   /**
